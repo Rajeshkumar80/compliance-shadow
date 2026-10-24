@@ -1,4 +1,4 @@
-﻿# Compliance Shadow
+# Compliance Shadow
 
 <div align="center">
 
@@ -199,59 +199,164 @@ A user submits a GitHub repository URL and selects a target country or jurisdict
 
 ## 5. System Architecture
 
-```text
-                     +---------------------------+
-                     |   React + TypeScript UI   |
-                     |  Dashboard / Repo URL     |
-                     |  Evidence / Approvals     |
-                     +------------+--------------+
-                                  | HTTPS / REST
-                     +------------v--------------+
-                     |   Python + FastAPI        |
-                     |  Authentication / APIs    |
-                     |  Job orchestration        |
-                     +-------+----------+--------+
-                             |          |
-             +---------------v--+    +--v-----------------+
-             |  Regulatory      |    |  Repository        |
-             |  Ingestion       |    |  Analysis          |
-             |  PDFs / HTML     |    |  Code / Manifests  |
-             +--------+---------+    |  Assets / Config   |
-                      |              +--------+-----------+
-                      +-----------+----------+
-                                  |
-                     +------------v--------------+
-                     |   AI and Policy Pipeline  |
-                     |  DL extraction / CV       |
-                     |  RAG / policy rules       |
-                     |  Agentic investigation    |
-                     |  Evidence and validation  |
-                     +------------+--------------+
-                                  |
-                     +------------v--------------+
-                     |   SAP HANA Cloud          |
-                     |  Versioned rules          |
-                     |  Findings and evidence    |
-                     |  Business records         |
-                     |  Repository scan metadata |
-                     +------------+--------------+
-                                  |
-                     +------------v--------------+
-                     |   MLOps and CI Pipeline   |
-                     |  Dataset/model versions   |
-                     |  Evaluation / drift checks|
-                     |  Release / rollback       |
-                     +---------------------------+
+The platform is organized into **six layers**, each with a clearly scoped responsibility. Data flows in one direction — from ingestion through intelligence to the user — with SAP HANA Cloud as the single source of truth for all versioned records.
+
+```mermaid
+flowchart TB
+    %% ── Layer 1: Data Sources ──────────────────────────────────────
+    subgraph L1["① Data Sources"]
+        direction LR
+        SRC_REG["🏛️ Official Regulatory Sources\nDGFT · CBIC · RBI · GST portals"]
+        SRC_REPO["🐙 GitHub Repository\nUser-submitted URL"]
+        SRC_BIZ["🏢 Business Records\nProducts · Shipments · Invoices"]
+    end
+
+    %% ── Layer 2: Ingestion ─────────────────────────────────────────
+    subgraph L2["② Ingestion & Extraction"]
+        direction LR
+        ING_DOC["📄 Document Collector\nScheduled fetch · Manual upload\nPyMuPDF · Tesseract OCR"]
+        ING_REPO["🔍 Repository Scanner\nRead-only clone · File inventory\nSemgrep · License tools"]
+        ING_BIZ["📦 Record Importer\nSynthetic or authorized data"]
+    end
+
+    %% ── Layer 3: AI & Policy Pipeline ─────────────────────────────
+    subgraph L3["③ AI & Policy Intelligence"]
+        direction TB
+        AI_DL["🧠 Deep Learning\nClause extraction · Image CV\nPyTorch · HuggingFace"]
+        AI_RAG["🔎 RAG\nEmbeddings · HANA vector search\nGrounded policy retrieval"]
+        AI_AGENTS["🤖 Agentic Orchestration\nLangGraph · LiteLLM\nRegulation · Repo · Impact · Remediation"]
+        AI_RULES["⚙️ Deterministic Rules Engine\nDate checks · Threshold logic\nPolicy profile matching"]
+
+        AI_DL --> AI_RAG
+        AI_RAG --> AI_AGENTS
+        AI_RULES --> AI_AGENTS
+    end
+
+    %% ── Layer 4: Data Platform ─────────────────────────────────────
+    subgraph L4["④ Data Platform — SAP HANA Cloud"]
+        direction LR
+        DB_RULES[("📋 Versioned Rules\n& Evidence")]
+        DB_FINDINGS[("🔴 Findings\n& Reports")]
+        DB_BIZ[("📊 Business Records\n& Scan Metadata")]
+        DB_MODELS[("🏷️ Model Registry\n& MLOps Metadata")]
+    end
+
+    %% ── Layer 5: API & Backend ─────────────────────────────────────
+    subgraph L5["⑤ API Layer — Python FastAPI"]
+        direction LR
+        API_AUTH["🔐 Auth & Multi-tenancy"]
+        API_JOBS["⏱️ Async Job Orchestration"]
+        API_POLICY["📜 Policy & Report Engine"]
+    end
+
+    %% ── Layer 6: Frontend ──────────────────────────────────────────
+    subgraph L6["⑥ Frontend — React + TypeScript"]
+        direction LR
+        UI_DASH["📊 Compliance Dashboard"]
+        UI_REPO["🔗 Repo Submission & Scan Status"]
+        UI_EVIDENCE["📎 Evidence Viewer & Approvals"]
+    end
+
+    %% ── MLOps Sidecar ──────────────────────────────────────────────
+    MLOPS["🔬 MLOps Control Plane\nMLflow · DVC · Evaluation · Release gates · Rollback"]
+
+    %% ── Data flow ──────────────────────────────────────────────────
+    SRC_REG --> ING_DOC
+    SRC_REPO --> ING_REPO
+    SRC_BIZ --> ING_BIZ
+
+    ING_DOC --> AI_DL
+    ING_REPO --> AI_AGENTS
+    ING_BIZ --> L4
+
+    AI_AGENTS --> L4
+
+    L4 <--> L5
+    L5 --> L6
+
+    MLOPS -. "model lifecycle\n& evaluation" .-> AI_DL
+    MLOPS -. "release gates" .-> AI_AGENTS
+
+    %% ── Styles ─────────────────────────────────────────────────────
+    classDef source fill:#1e3a5f,color:#ffffff,stroke:#4a90d9,stroke-width:1.5px
+    classDef ingest fill:#1a4731,color:#ffffff,stroke:#2ecc71,stroke-width:1.5px
+    classDef ai    fill:#3d1a4f,color:#ffffff,stroke:#9b59b6,stroke-width:1.5px
+    classDef db    fill:#4a2800,color:#ffffff,stroke:#e67e22,stroke-width:1.5px
+    classDef api   fill:#1a3a4f,color:#ffffff,stroke:#3498db,stroke-width:1.5px
+    classDef ui    fill:#1a1a3e,color:#ffffff,stroke:#6c63ff,stroke-width:1.5px
+    classDef mlops fill:#2d2d2d,color:#cccccc,stroke:#888888,stroke-width:1.5px,stroke-dasharray:5 5
+
+    class SRC_REG,SRC_REPO,SRC_BIZ source
+    class ING_DOC,ING_REPO,ING_BIZ ingest
+    class AI_DL,AI_RAG,AI_AGENTS,AI_RULES ai
+    class DB_RULES,DB_FINDINGS,DB_BIZ,DB_MODELS db
+    class API_AUTH,API_JOBS,API_POLICY api
+    class UI_DASH,UI_REPO,UI_EVIDENCE ui
+    class MLOPS mlops
 ```
 
-### Architecture Notes
+---
 
-- **SAP HANA Cloud** is the primary structured data platform; vector capabilities used only where supported
-- **Raw source documents** remain traceable: source URL, publication date, retrieval timestamp, document hash, and version metadata
-- **Deep learning** assists document understanding; it does not independently decide legal applicability
-- **Deterministic rules** handle explicit conditions: dates, product categories, thresholds, required-document checks
-- **Agentic AI** coordinates bounded tasks and produces traceable proposals — must not silently convert uncertain interpretation into a confirmed legal conclusion
-- **MLOps** governs dataset/model versioning, evaluation, deployment, and rollback
+### End-to-End Request Flow
+
+This diagram shows exactly how a user request travels through the system — from submission to a reviewed compliance finding.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI   as React Dashboard
+    participant API  as FastAPI Backend
+    participant SCAN as Scanner / Ingestion
+    participant AI   as AI & Policy Pipeline
+    participant DB   as SAP HANA Cloud
+    participant REV  as Human Reviewer
+
+    User->>UI: Submit GitHub repo URL + select jurisdiction & policy profile
+    UI->>API: POST /api/v1/repo-scans  { url, jurisdiction, policy_profile }
+    API->>API: Validate URL · check allow-list · enforce size limits
+    API->>SCAN: Dispatch async scan job
+    API-->>UI: 202 Accepted  { job_id }
+    UI->>UI: Poll job status (SSE / WebSocket)
+
+    SCAN->>SCAN: Read-only clone · inventory files · detect languages
+    SCAN->>SCAN: Run Semgrep · license tools · secrets detection · asset CV
+    SCAN->>AI: Emit raw findings + file evidence
+
+    AI->>DB: Fetch versioned policy rules for selected jurisdiction
+    DB-->>AI: Applicable policy rules + rule versions
+    AI->>AI: Map raw evidence → policy rules (RAG + deterministic checks)
+    AI->>AI: Classify: confirmed / potential / needs-review
+    AI->>AI: Independent verifier checks every finding has source + evidence
+    AI->>DB: Persist RepositoryScan + RepositoryFinding + FindingEvidence
+    DB-->>API: Job complete
+
+    API-->>UI: Scan complete · findings ready
+    UI-->>User: Show findings grouped by severity · confidence · policy rule
+
+    User->>UI: Open finding detail · view evidence · file path · rule version
+    User->>REV: Escalate to human reviewer (for HIGH / NEEDS-REVIEW findings)
+    REV->>UI: Approve · reject · or amend finding
+    UI->>API: POST /api/v1/findings/{id}/review  { decision, notes }
+    API->>DB: Persist ReviewDecision + audit trail
+    DB-->>API: Saved
+    API-->>UI: Finding status updated
+    UI-->>User: Show approved finding with audit record + remediation checklist
+```
+
+---
+
+### Layer Responsibilities at a Glance
+
+| Layer | What it does | What it does NOT do |
+|---|---|---|
+| **Data Sources** | Official regulatory PDFs · GitHub repos · business records | Execute repo code · accept arbitrary URLs |
+| **Ingestion** | Read-only fetch · extract text · inventory assets | Store raw secrets · run untrusted scripts |
+| **AI & Policy** | Map evidence to versioned rules · classify findings · draft remediation | Make legal determinations · approve its own output |
+| **SAP HANA Cloud** | Version all rules · store all findings with evidence · audit trail | Act as a vector-only store — full relational + vector |
+| **FastAPI** | Auth · async job management · policy orchestration · report export | Push to user repos · submit government forms |
+| **React Dashboard** | Display evidence · drive human review · show audit history | Auto-approve findings · bypass reviewer workflow |
+| **MLOps Sidecar** | Experiment tracking · model versioning · release gates · rollback | Block the synchronous request path |
 
 ---
 
