@@ -47,9 +47,9 @@ _Connecting regulatory changes to business records and software repositories —
 | **Target users** | Indian MSME exporters · Software teams · Compliance teams · Organizations across jurisdictions |
 | **Frontend** | React + TypeScript + Vite + Tailwind CSS |
 | **Backend** | Python + FastAPI + Pydantic |
-| **Primary database** | SAP HANA Cloud |
-| **AI stack** | Agentic AI · Deep Learning · RAG · LangGraph |
-| **MLOps** | MLflow · DVC · automated evaluation · controlled model deployment |
+| **Primary database** | SAP HANA Cloud (structured) · Pinecone (vector) |
+| **AI stack** | Agentic AI · Deep Learning · RAG · LangGraph · LangSmith |
+| **MLOps** | LangSmith · DVC · automated evaluation · controlled model deployment |
 
 ---
 
@@ -95,8 +95,9 @@ The core problem is establishing:
 ### A. Regulatory Change Intelligence
 
 - Monitor selected official sources: DGFT, CBIC, RBI, GST-related sources, and other relevant authorities
-- Detect new or amended publications using permitted access methods
-- Extract text, tables, dates, document identifiers, obligations, exceptions, and effective dates from PDFs and web pages
+- **Collect regulatory data via the [DuckDuckGo Search API](https://duckduckgo.com/)** — returns clean structured JSON results without HTML scraping or bot-detection friction
+- Parse returned JSON results to extract document titles, source URLs, publication dates, and snippet text
+- Follow discovered URLs to retrieve full documents (PDF or HTML) only where DuckDuckGo JSON does not surface sufficient detail
 - Compare a new publication with prior versions and draft a structured description of the change
 - Store the original source, extracted rule, version, publication date, effective date, and evidence references
 - Mark ambiguous or conflicting interpretations for human review
@@ -175,7 +176,7 @@ A user submits a GitHub repository URL and selects a target country or jurisdict
 2. Document pipeline extracts content, compares with prior version
 3. Regulation agent drafts a structured change with exact source references
 4. Policy/rules validation checks required fields, dates, and contradictions
-5. New rule stored as a proposed version in SAP HANA Cloud
+5. New rule stored as a proposed version in SAP HANA Cloud; embeddings written to Pinecone
 6. After validation or human approval, impact agent checks synthetic shipment records
 7. User sees: affected records · evidence · uncertainty · recommended actions
 
@@ -199,14 +200,14 @@ A user submits a GitHub repository URL and selects a target country or jurisdict
 
 ## 5. System Architecture
 
-The platform is organized into **six layers**, each with a clearly scoped responsibility. Data flows in one direction — from ingestion through intelligence to the user — with SAP HANA Cloud as the single source of truth for all versioned records.
+The platform is organized into **six layers**, each with a clearly scoped responsibility. Data flows in one direction — from ingestion through intelligence to the user — with SAP HANA Cloud holding all structured/relational records and **Pinecone** storing all vector embeddings for semantic retrieval.
 
 ```mermaid
 flowchart TB
     %% ── Layer 1: Data Sources ──────────────────────────────────────
     subgraph L1["① Data Sources"]
         direction LR
-        SRC_REG["🏛️ Official Regulatory Sources\nDGFT · CBIC · RBI · GST portals"]
+        SRC_DDG["🦆 DuckDuckGo Search API\nJSON results · source URLs\nDGFT · CBIC · RBI · GST portals"]
         SRC_REPO["🐙 GitHub Repository\nUser-submitted URL"]
         SRC_BIZ["🏢 Business Records\nProducts · Shipments · Invoices"]
     end
@@ -214,7 +215,7 @@ flowchart TB
     %% ── Layer 2: Ingestion ─────────────────────────────────────────
     subgraph L2["② Ingestion & Extraction"]
         direction LR
-        ING_DOC["📄 Document Collector\nScheduled fetch · Manual upload\nPyMuPDF · Tesseract OCR"]
+        ING_DOC["📄 Document Collector\nDuckDuckGo JSON → URL follow-up\nPyMuPDF · Tesseract OCR for PDFs"]
         ING_REPO["🔍 Repository Scanner\nRead-only clone · File inventory\nSemgrep · License tools"]
         ING_BIZ["📦 Record Importer\nSynthetic or authorized data"]
     end
@@ -223,8 +224,8 @@ flowchart TB
     subgraph L3["③ AI & Policy Intelligence"]
         direction TB
         AI_DL["🧠 Deep Learning\nClause extraction · Image CV\nPyTorch · HuggingFace"]
-        AI_RAG["🔎 RAG\nEmbeddings · HANA vector search\nGrounded policy retrieval"]
-        AI_AGENTS["🤖 Agentic Orchestration\nLangGraph · LiteLLM\nRegulation · Repo · Impact · Remediation"]
+        AI_RAG["🔎 RAG\nEmbeddings → Pinecone\nGrounded policy retrieval"]
+        AI_AGENTS["🤖 Agentic Orchestration\nLangGraph · LiteLLM · LangSmith\nRegulation · Repo · Impact · Remediation"]
         AI_RULES["⚙️ Deterministic Rules Engine\nDate checks · Threshold logic\nPolicy profile matching"]
 
         AI_DL --> AI_RAG
@@ -233,12 +234,11 @@ flowchart TB
     end
 
     %% ── Layer 4: Data Platform ─────────────────────────────────────
-    subgraph L4["④ Data Platform — SAP HANA Cloud"]
+    subgraph L4["④ Data Platform"]
         direction LR
-        DB_RULES[("📋 Versioned Rules\n& Evidence")]
-        DB_FINDINGS[("🔴 Findings\n& Reports")]
-        DB_BIZ[("📊 Business Records\n& Scan Metadata")]
-        DB_MODELS[("🏷️ Model Registry\n& MLOps Metadata")]
+        DB_RULES[("📋 SAP HANA Cloud\nVersioned Rules & Evidence\nFindings & Audit Trail")]
+        DB_VEC[("🔵 Pinecone\nVector Embeddings\nSemantic Rule Retrieval")]
+        DB_MODELS[("🏷️ LangSmith\nModel Runs · Traces\nPrompt Versions · Evals")]
     end
 
     %% ── Layer 5: API & Backend ─────────────────────────────────────
@@ -258,10 +258,10 @@ flowchart TB
     end
 
     %% ── MLOps Sidecar ──────────────────────────────────────────────
-    MLOPS["🔬 MLOps Control Plane\nMLflow · DVC · Evaluation · Release gates · Rollback"]
+    MLOPS["🔬 MLOps Control Plane\nLangSmith · DVC · Evaluation · Release gates · Rollback"]
 
     %% ── Data flow ──────────────────────────────────────────────────
-    SRC_REG --> ING_DOC
+    SRC_DDG --> ING_DOC
     SRC_REPO --> ING_REPO
     SRC_BIZ --> ING_BIZ
 
@@ -269,6 +269,8 @@ flowchart TB
     ING_REPO --> AI_AGENTS
     ING_BIZ --> L4
 
+    AI_RAG --> DB_VEC
+    DB_VEC --> AI_RAG
     AI_AGENTS --> L4
 
     L4 <--> L5
@@ -286,10 +288,10 @@ flowchart TB
     classDef ui    fill:#1a1a3e,color:#ffffff,stroke:#6c63ff,stroke-width:1.5px
     classDef mlops fill:#2d2d2d,color:#cccccc,stroke:#888888,stroke-width:1.5px,stroke-dasharray:5 5
 
-    class SRC_REG,SRC_REPO,SRC_BIZ source
+    class SRC_DDG,SRC_REPO,SRC_BIZ source
     class ING_DOC,ING_REPO,ING_BIZ ingest
     class AI_DL,AI_RAG,AI_AGENTS,AI_RULES ai
-    class DB_RULES,DB_FINDINGS,DB_BIZ,DB_MODELS db
+    class DB_RULES,DB_VEC,DB_MODELS db
     class API_AUTH,API_JOBS,API_POLICY api
     class UI_DASH,UI_REPO,UI_EVIDENCE ui
     class MLOPS mlops
@@ -309,7 +311,7 @@ sequenceDiagram
     participant API  as FastAPI Backend
     participant SCAN as Scanner / Ingestion
     participant AI   as AI & Policy Pipeline
-    participant DB   as SAP HANA Cloud
+    participant DB   as SAP HANA Cloud + Pinecone
     participant REV  as Human Reviewer
 
     User->>UI: Submit GitHub repo URL + select jurisdiction & policy profile
@@ -323,12 +325,15 @@ sequenceDiagram
     SCAN->>SCAN: Run Semgrep · license tools · secrets detection · asset CV
     SCAN->>AI: Emit raw findings + file evidence
 
-    AI->>DB: Fetch versioned policy rules for selected jurisdiction
+    AI->>DB: Query Pinecone for semantically similar policy clauses
+    DB-->>AI: Top-k matching embeddings + rule IDs
+    AI->>DB: Fetch full versioned policy rules from SAP HANA Cloud
     DB-->>AI: Applicable policy rules + rule versions
     AI->>AI: Map raw evidence → policy rules (RAG + deterministic checks)
     AI->>AI: Classify: confirmed / potential / needs-review
     AI->>AI: Independent verifier checks every finding has source + evidence
-    AI->>DB: Persist RepositoryScan + RepositoryFinding + FindingEvidence
+    AI->>DB: Persist RepositoryScan + RepositoryFinding + FindingEvidence (HANA)
+    AI->>DB: Write new clause embeddings to Pinecone index
     DB-->>API: Job complete
 
     API-->>UI: Scan complete · findings ready
@@ -350,13 +355,14 @@ sequenceDiagram
 
 | Layer | What it does | What it does NOT do |
 |---|---|---|
-| **Data Sources** | Official regulatory PDFs · GitHub repos · business records | Execute repo code · accept arbitrary URLs |
-| **Ingestion** | Read-only fetch · extract text · inventory assets | Store raw secrets · run untrusted scripts |
+| **Data Sources** | DuckDuckGo JSON search · GitHub repos · business records | Execute repo code · accept arbitrary URLs |
+| **Ingestion** | DuckDuckGo API → URL follow-up → PDF/HTML parse · file inventory | Store raw secrets · scrape without permission |
 | **AI & Policy** | Map evidence to versioned rules · classify findings · draft remediation | Make legal determinations · approve its own output |
-| **SAP HANA Cloud** | Version all rules · store all findings with evidence · audit trail | Act as a vector-only store — full relational + vector |
+| **SAP HANA Cloud** | Structured records — versioned rules · findings · audit trail | Store raw vector embeddings |
+| **Pinecone** | Vector embeddings — fast semantic similarity search for policy clauses | Store structured/relational records |
 | **FastAPI** | Auth · async job management · policy orchestration · report export | Push to user repos · submit government forms |
 | **React Dashboard** | Display evidence · drive human review · show audit history | Auto-approve findings · bypass reviewer workflow |
-| **MLOps Sidecar** | Experiment tracking · model versioning · release gates · rollback | Block the synchronous request path |
+| **LangSmith / MLOps** | LLM tracing · prompt versioning · model run tracking · release gates · rollback | Block the synchronous request path |
 
 ---
 
@@ -366,19 +372,25 @@ sequenceDiagram
 |---|---|---|
 | **Frontend** | React · TypeScript · Vite · Tailwind CSS | Dashboard · repository submission · evidence viewer · policy selection · scan progress · approvals |
 | **Backend API** | Python · FastAPI · Pydantic | REST APIs · validation · job management · policy orchestration · report generation |
-| **Primary database** | SAP HANA Cloud | Versioned rules · findings · evidence metadata · business data · relationships · embeddings |
-| **Agentic AI** | LangGraph or equivalent | Multi-step investigation · tool routing · evidence gathering · impact analysis · remediation proposals |
-| **LLM access** | LiteLLM gateway or program-provided model API | Route supported models · manage model calls · keep API keys in environment variables or secret manager |
+| **Structured database** | SAP HANA Cloud | Versioned rules · findings · evidence metadata · business records · audit trail |
+| **Vector database** | [Pinecone](https://www.pinecone.io/) | Store and query clause/policy embeddings for semantic RAG retrieval — accessed via Pinecone API key |
+| **Data ingestion** | [DuckDuckGo Search API](https://duckduckgo.com/) | Fetch regulatory source links in clean JSON format; follow URLs to retrieve full documents (PDF/HTML) where needed |
+| **Agentic AI** | LangGraph · LangSmith | Multi-step investigation · tool routing · evidence gathering · LLM call tracing · prompt versioning |
+| **LLM access** | LiteLLM gateway or program-provided model API | Route supported models · manage model calls · keep API keys in environment variables or a secret manager |
 | **Deep learning** | PyTorch · Hugging Face Transformers | Document-layout understanding · clause/entity extraction · image/asset recognition |
-| **RAG** | Embeddings + SAP HANA vector capabilities | Retrieve source clauses and policy passages relevant to a finding |
+| **RAG** | Embeddings + Pinecone similarity search | Retrieve the most semantically relevant policy clauses to ground each finding |
+| **ML experiment tracking** | [LangSmith](https://www.langchain.com/langsmith) | Trace LLM calls · version prompts · track model runs · run evaluations · manage release gates |
+| **Dataset versioning** | DVC | Version datasets and model artifacts alongside Git |
 | **Static code analysis** | Semgrep · language-specific linters · dependency/license tools | Deterministic detection of code patterns and dependency metadata |
 | **Document extraction** | PyMuPDF · Tesseract OCR (when needed) | Extract PDF text and handle scanned documents |
-| **MLOps** | MLflow · DVC · automated evaluation scripts | Experiment tracking · dataset/model versioning · reproducibility · promotion gates |
 | **CI/CD** | GitHub Actions · Docker | Test and package services · run regression tests · build reproducible containers |
 | **Optional SAP UI** | SAP Fiori / UI5 | Use alongside React if the project sponsor requires SAP-native UI |
 | **Optional SAP integration** | CAP or ABAP Cloud / RAP | Add if SAP application integration is a project requirement |
 
-> **Design decision:** Do not add a separate vector database unless a genuine technical constraint requires it. Keep SAP HANA Cloud as the primary data platform.
+> **Design decisions:**
+> - **Pinecone** is used exclusively for vector embeddings and similarity search. All structured, relational, and audit records remain in SAP HANA Cloud.
+> - **DuckDuckGo Search API** is used for regulatory discovery — returning structured JSON so the backend never needs to parse raw HTML or handle bot-detection.
+> - **LangSmith** replaces MLflow for LLM-specific tracing, prompt versioning, and model evaluation. DVC handles dataset and non-LLM artifact versioning.
 
 ---
 
@@ -413,54 +425,72 @@ Use specialized agents with restricted tools. Agents must **not** be given unres
 | Task | Approach |
 |---|---|
 | Extract structured fields from complex regulatory documents | Transformer-based document understanding |
-| Recognize document clauses and match semantically similar versions | Semantic embedding + matching |
+| Recognize document clauses and match semantically similar versions | Semantic embedding → stored in Pinecone for retrieval |
 | Identify likely flag, emblem, or logo assets from repository images | Computer vision classification |
 | Rank potentially relevant code or text snippets for policy review | Text relevance scoring |
 
 > Do not use an image classifier alone to decide whether an asset is legally allowed. Legal applicability depends on jurisdiction and context, which require policy rules and often human review.
 
+### MLOps Stack — LangSmith + DVC
+
+| Tool | Role |
+|---|---|
+| **[LangSmith](https://www.langchain.com/langsmith)** | Trace every LLM call end-to-end · version prompts · compare model outputs across runs · run automated evaluations · set release gates |
+| **DVC** | Version datasets and non-LLM model artifacts (PyTorch checkpoints, OCR model weights) alongside the Git repo |
+
 ### MLOps Lifecycle Steps
 
-1. **Dataset curation** — Create labelled examples from permitted documents and synthetic repository test cases
-2. **Versioning** — Store dataset versions, annotation guidelines, model configurations, and evaluation splits
-3. **Training** — Train or fine-tune only if available labelled data justifies it; otherwise use a pretrained model and benchmark it
-4. **Evaluation** — Measure precision, recall, false-positive rate, extraction accuracy, and calibration on a held-out test set
-5. **Release gates** — Promote a model only if it meets agreed thresholds and passes regression tests
-6. **Monitoring** — Track changing document formats, model confidence, false-positive reports, and failure patterns
-7. **Rollback** — Keep the prior model version available if a new version degrades performance
+1. **Dataset curation** — Collect labelled documents via DuckDuckGo API + manual review; version with DVC
+2. **Prompt versioning** — Store and version all LLM prompts in LangSmith; never hard-code prompts in source
+3. **Training** — Fine-tune only if labelled data justifies it; otherwise use a pretrained model and benchmark it
+4. **Tracing** — Every agent LLM call is automatically traced in LangSmith with inputs, outputs, latency, and token cost
+5. **Evaluation** — Run LangSmith evaluations on a fixed test set; measure precision, recall, and unsupported-claim rate
+6. **Release gates** — Promote a prompt or model version only if it meets agreed thresholds in LangSmith
+7. **Monitoring** — Use LangSmith dashboards to track model confidence drift, false-positive trends, and failure patterns
+8. **Rollback** — Revert to the previous prompt or model version in LangSmith if a new version degrades performance
 
 ### Suggested Evaluation Metrics
 
-| Component | Metrics |
-|---|---|
-| PDF extraction | Character/word error rate; table and field extraction accuracy |
-| Clause extraction | Precision, recall, F1 |
-| Effective-date extraction | Exact-match accuracy |
-| Change detection | Precision, recall, F1 for additions/removals/amendments |
-| Impact assessment | Affected-record precision/recall; false-positive rate |
-| Grounded generation | Citation correctness, evidence coverage, unsupported-claim rate |
-| System | Processing time, failure rate, reproducibility |
+| Component | Metrics | Tracked in |
+|---|---|---|
+| PDF extraction | Character/word error rate; table and field extraction accuracy | DVC + LangSmith |
+| Clause extraction | Precision, recall, F1 | LangSmith evaluations |
+| Effective-date extraction | Exact-match accuracy | LangSmith evaluations |
+| Change detection | Precision, recall, F1 for additions/removals/amendments | LangSmith evaluations |
+| Impact assessment | Affected-record precision/recall; false-positive rate | LangSmith evaluations |
+| Grounded generation | Citation correctness, evidence coverage, unsupported-claim rate | LangSmith tracing |
+| Pinecone retrieval | Top-k recall on policy clause retrieval test set | Custom eval scripts |
+| System | Processing time, failure rate, reproducibility | LangSmith + CI metrics |
 
 ---
 
-## 9. SAP HANA Data Model
+## 9. Data Model (SAP HANA Cloud + Pinecone)
+
+### SAP HANA Cloud — Structured Records
 
 | Entity | Key Fields | Purpose |
 |---|---|---|
-| `SourceDocument` | source_url · authority · publication_date · document_type · content_hash | Immutable official source record |
+| `SourceDocument` | source_url · duckduckgo_query · authority · publication_date · content_hash | Immutable official source record (discovered via DuckDuckGo API) |
 | `DocumentVersion` | version_id · document_id · version_label · retrieval_timestamp · extraction_status | Document version history |
 | `RegulatoryRule` | rule_id · title · obligation · effective_date · jurisdiction · status | Structured versioned obligation |
-| `RuleEvidence` | rule_id · document_version · page/section · supporting_excerpt | Clause-level source evidence |
+| `RuleEvidence` | rule_id · document_version · page/section · supporting_excerpt · pinecone_vector_id | Clause-level source evidence with Pinecone cross-reference |
 | `RuleRelationship` | supersedes · amends · depends_on · conflicts_with · applies_to | Inter-rule relationships |
 | `OrganizationProfile` | jurisdiction · industry · product_categories · policy_profile | Organization compliance context |
 | `BusinessRecord` | product/shipment/transaction/document metadata | Impact assessment input |
 | `RepositoryScan` | repository_url · commit_hash · scan_time · selected_profile · scanner_versions | Repository scan metadata |
 | `RepositoryFinding` | rule/check_id · severity · confidence · status · file_path · line_range | Individual compliance finding |
 | `FindingEvidence` | excerpt/hash · source_reference · rule_version · explanation | Evidence behind a finding |
-| `ModelRelease` | model_id · version · evaluation_metrics · release_status | MLOps traceability |
+| `LangSmithRun` | run_id · prompt_version · model_id · langsmith_trace_url · evaluation_scores | LangSmith trace cross-reference for every AI-generated finding |
 | `RemediationProposal` | suggested_action/patch · validation_status · approver · decision_history | Human-governed remediation |
 
-> Store sensitive source material and credentials carefully. Prefer repository commit hashes and file references for reproducibility. Redact secrets and minimize retained source code.
+### Pinecone — Vector Index
+
+| Index | Vectors stored | Used for |
+|---|---|---|
+| `policy-clauses` | One vector per extracted regulatory clause (with rule_id metadata) | Semantic RAG retrieval — find the most relevant policy rule for a given finding |
+| `repo-findings` | One vector per repository finding description | Deduplicate and cluster similar findings across scans |
+
+> **Storage split:** SAP HANA Cloud owns all structured, relational, and audit data. Pinecone owns only dense vectors and their metadata IDs — never full text or credentials. Cross-reference via `pinecone_vector_id` stored in HANA.
 
 ---
 
@@ -505,7 +535,7 @@ Use specialized agents with restricted tools. Agents must **not** be given unres
 
 | Phase | Deliverable | Acceptance Evidence |
 |---|---|---|
-| **Phase 1 — Foundation** | React + TypeScript frontend · FastAPI backend · SAP HANA Cloud connection · authentication · async job status · schema · audit logging | Working end-to-end connection with schema in place |
+| **Phase 1 — Foundation** | React + TypeScript frontend · FastAPI backend · SAP HANA Cloud connection · Pinecone index setup · LangSmith project configuration · DuckDuckGo API integration · authentication · async job status · schema · audit logging | Working end-to-end connection with all services reachable |
 | **Phase 2 — Regulatory Intelligence** | Extract and version notifications · structured rule-change candidates with citations · human review workflow | Labelled evaluation report on extracted clauses |
 | **Phase 3 — Repository Scanning** | Accept public repository URLs · language detection · manifests · license checks · secrets scanning · file/asset inventory · simple policy profile | Repository finding report with file-level evidence |
 | **Phase 4 — Agents and Impact Analysis** | Regulation · repository · applicability · impact · remediation agents · deterministic policy checks · evidence and confidence labels | Evidence-backed impact assessment; no automatic external changes |
@@ -581,21 +611,22 @@ compliance-shadow/
 ├── backend/
 │   ├── app/
 │   │   ├── api/                # FastAPI route handlers
-│   │   ├── ingestion/          # Regulatory document collectors
-│   │   ├── extraction/         # PDF/HTML extraction pipeline
-│   │   ├── agents/             # LangGraph agent definitions
+│   │   ├── ingestion/          # DuckDuckGo API search + document fetch + PDF/HTML parse
+│   │   ├── extraction/         # PDF/HTML extraction pipeline (PyMuPDF · Tesseract)
+│   │   ├── agents/             # LangGraph agent definitions (traced via LangSmith)
 │   │   ├── compliance/         # Policy rules and impact analysis
 │   │   ├── repo_scanner/       # GitHub repository analysis
 │   │   ├── hana/               # SAP HANA Cloud data access layer
-│   │   ├── rag/                # Retrieval-augmented generation
+│   │   ├── pinecone/           # Pinecone vector index client + embedding helpers
+│   │   ├── rag/                # Retrieval-augmented generation (Pinecone similarity search)
 │   │   └── schemas/            # Pydantic schemas and data models
 │   ├── tests/
 │   └── requirements.txt
 ├── ml/
-│   ├── datasets/               # Versioned dataset artifacts
+│   ├── datasets/               # DVC-versioned dataset artifacts
 │   ├── training/               # Training scripts and configs
-│   ├── evaluation/             # Evaluation scripts and reports
-│   └── model_registry/         # MLflow model registry artifacts
+│   ├── evaluation/             # LangSmith eval scripts and reports
+│   └── prompts/                # Versioned LangSmith prompt templates
 ├── infra/
 │   ├── docker/                 # Dockerfiles per service
 │   └── ci/                     # GitHub Actions workflow definitions
@@ -619,7 +650,10 @@ compliance-shadow/
 - Node.js >= 18
 - Python >= 3.11
 - Docker and Docker Compose
-- SAP HANA Cloud account (or connection string)
+- SAP HANA Cloud account (connection string + credentials)
+- [Pinecone](https://www.pinecone.io/) account (API key + index name)
+- [LangSmith](https://www.langchain.com/langsmith) account (API key + project name)
+- DuckDuckGo Search API access (no login required for basic JSON endpoint; rate-limit aware)
 - LLM API key (via LiteLLM gateway or direct provider)
 
 ### Local Development Setup
@@ -631,7 +665,7 @@ cd compliance-shadow
 
 # 2. Copy and configure environment variables
 cp .env.example .env
-# Edit .env with your SAP HANA Cloud credentials, LLM API key, etc.
+# Edit .env with your HANA, Pinecone, LangSmith, and LLM credentials
 
 # 3. Start infrastructure services
 docker-compose up -d
@@ -657,6 +691,11 @@ Visit `http://localhost:5173` for the dashboard and `http://localhost:8000/docs`
 | `HANA_PORT` | SAP HANA Cloud port (default: 443) |
 | `HANA_USER` | Database user |
 | `HANA_PASSWORD` | Database password |
+| `PINECONE_API_KEY` | [Pinecone](https://www.pinecone.io/) API key |
+| `PINECONE_INDEX_NAME` | Pinecone index name (e.g. `policy-clauses`) |
+| `PINECONE_ENVIRONMENT` | Pinecone cloud environment (e.g. `us-east-1-aws`) |
+| `LANGSMITH_API_KEY` | [LangSmith](https://www.langchain.com/langsmith) API key |
+| `LANGSMITH_PROJECT` | LangSmith project name (e.g. `compliance-shadow-prod`) |
 | `LLM_API_KEY` | LLM provider API key |
 | `LITELLM_BASE_URL` | LiteLLM gateway base URL (if using) |
 | `GITHUB_TOKEN` | GitHub personal access token (read-only, for private repo scanning) |
@@ -690,6 +729,6 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 **Compliance Shadow** — _Connecting regulatory intelligence to business records and software repositories, with evidence and human oversight._
 
-Built with React · TypeScript · FastAPI · SAP HANA Cloud · LangGraph · PyTorch
+Built with React · TypeScript · FastAPI · SAP HANA Cloud · Pinecone · LangGraph · LangSmith · PyTorch
 
 </div>
